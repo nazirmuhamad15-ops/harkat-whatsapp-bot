@@ -1,19 +1,21 @@
 {
   "name": "harkat-whatsapp-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Bot for Harkat Furniture",
-  "main": "bot.js",
+  "description": "Standalone WhatsApp Bot for Harkat Furniture",
+  "main": "src/index.ts",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "npx tsx bot.ts"
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "pino": "^10.1.0",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pino": "^9.5.0",
     "qrcode-terminal": "^0.12.0"
   },
-  "engines": {
-    "node": ">=20.0.0"
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
   }
 }
