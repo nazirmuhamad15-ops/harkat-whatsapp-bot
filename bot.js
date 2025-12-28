@@ -59,11 +59,74 @@ async function startWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds)
     
-    // Listen for incoming messages
+    // Auto-reply configuration
+    const AUTO_REPLIES = {
+        // Greetings
+        'halo': 'Halo! 👋 Selamat datang di Harkat Furniture.\n\nKetik angka untuk info:\n1. Jadwal operasional\n2. Cara order\n3. Cek status pesanan\n4. Alamat toko\n5. Hubungi CS',
+        'hai': 'Halo! 👋 Selamat datang di Harkat Furniture.\n\nKetik angka untuk info:\n1. Jadwal operasional\n2. Cara order\n3. Cek status pesanan\n4. Alamat toko\n5. Hubungi CS',
+        'hi': 'Halo! 👋 Selamat datang di Harkat Furniture.\n\nKetik angka untuk info:\n1. Jadwal operasional\n2. Cara order\n3. Cek status pesanan\n4. Alamat toko\n5. Hubungi CS',
+        'selamat pagi': 'Selamat pagi! ☀️ Ada yang bisa kami bantu?',
+        'selamat siang': 'Selamat siang! 🌤️ Ada yang bisa kami bantu?',
+        'selamat sore': 'Selamat sore! 🌅 Ada yang bisa kami bantu?',
+        'selamat malam': 'Selamat malam! 🌙 Ada yang bisa kami bantu?',
+        
+        // Menu options
+        '1': '🕐 *Jadwal Operasional*\n\nSenin - Jumat: 09.00 - 18.00\nSabtu: 09.00 - 15.00\nMinggu & Libur: Tutup',
+        '2': '🛒 *Cara Order*\n\n1. Kunjungi website kami\n2. Pilih produk yang diinginkan\n3. Tambahkan ke keranjang\n4. Checkout dan pilih metode pembayaran\n5. Tunggu konfirmasi dari kami\n\n🌐 Website: harkatfurniture.com',
+        '3': '📦 *Cek Status Pesanan*\n\nSilakan kirimkan nomor order Anda dengan format:\n\nCEK ORD-XXXXXX\n\nContoh: CEK ORD-123456',
+        '4': '📍 *Alamat Toko*\n\nHarkat Furniture\nJl. Furniture No. 123\nJakarta Selatan 12345\n\nGoogle Maps: https://maps.google.com',
+        '5': '📞 *Hubungi Customer Service*\n\nTim CS kami akan segera menghubungi Anda.\n\nUntuk respon lebih cepat, silakan jelaskan:\n- Nama lengkap\n- Nomor order (jika ada)\n- Pertanyaan/keluhan Anda',
+        
+        // Common questions
+        'harga': 'Untuk informasi harga, silakan kunjungi website kami di harkatfurniture.com atau ketik nama produk yang ingin Anda tanyakan.',
+        'ongkir': '🚚 *Info Ongkir*\n\n- Jabodetabek: Gratis ongkir untuk pembelian min. Rp 5.000.000\n- Luar Jabodetabek: Dihitung berdasarkan berat & lokasi\n\nKetik alamat lengkap Anda untuk estimasi ongkir.',
+        'promo': '🎉 *Promo Terbaru*\n\nCek promo terbaru di website kami!\n\n🌐 harkatfurniture.com/promo',
+        'terima kasih': 'Sama-sama! 🙏 Jangan ragu hubungi kami jika ada pertanyaan lain.',
+        'terimakasih': 'Sama-sama! 🙏 Jangan ragu hubungi kami jika ada pertanyaan lain.',
+        'makasih': 'Sama-sama! 🙏 Jangan ragu hubungi kami jika ada pertanyaan lain.',
+        'thanks': 'Sama-sama! 🙏 Jangan ragu hubungi kami jika ada pertanyaan lain.',
+    }
+
+    // Listen for incoming messages with auto-reply
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0]
         if (!msg.key.fromMe && m.type === 'notify') {
-            console.log(`📨 New message from ${msg.key.remoteJid}:`, msg.message?.conversation || '[media]')
+            const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').toLowerCase().trim()
+            const sender = msg.key.remoteJid
+            
+            console.log(`📨 New message from ${sender}:`, text)
+            
+            // Check for auto-reply match
+            let reply = null
+            
+            // Exact match first
+            if (AUTO_REPLIES[text]) {
+                reply = AUTO_REPLIES[text]
+            } else {
+                // Partial match
+                for (const [keyword, response] of Object.entries(AUTO_REPLIES)) {
+                    if (text.includes(keyword)) {
+                        reply = response
+                        break
+                    }
+                }
+            }
+            
+            // Check for order status query
+            if (text.startsWith('cek ord-') || text.startsWith('cek #ord-')) {
+                const orderNum = text.replace('cek ', '').replace('#', '').toUpperCase()
+                reply = `📦 *Status Pesanan ${orderNum}*\n\nUntuk cek status pesanan secara real-time, silakan:\n\n1. Kunjungi: harkatfurniture.com/track\n2. Masukkan nomor order: ${orderNum}\n\nAtau tunggu CS kami menghubungi Anda.`
+            }
+            
+            // Send auto-reply if found
+            if (reply && sender) {
+                try {
+                    await sock.sendMessage(sender, { text: reply })
+                    console.log(`🤖 Auto-reply sent to ${sender}`)
+                } catch (err) {
+                    console.error('Auto-reply error:', err)
+                }
+            }
         }
     })
 }
