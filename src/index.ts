@@ -14,6 +14,7 @@ import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import * as http from 'http'
 import * as path from 'path'
+// @ts-ignore
 import qrTerminal from 'qrcode-terminal'
 
 let sock: any = null
