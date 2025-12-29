@@ -21,7 +21,7 @@ let qrCode: string | null = null
 let connectionStatus = 'disconnected'
 
 async function startWhatsApp() {
-    const authPath = path.resolve(__dirname, '../prisma/whatsapp_auth_baileys')
+    const authPath = path.resolve(__dirname, '../auth_info_baileys')
     const { state, saveCreds } = await useMultiFileAuthState(authPath)
     const { version, isLatest } = await fetchLatestBaileysVersion()
     

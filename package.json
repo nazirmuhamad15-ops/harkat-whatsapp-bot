@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "Standalone WhatsApp Bot for Harkat Furniture",
   "main": "src/index.ts",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "build": "echo 'No build step'"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
