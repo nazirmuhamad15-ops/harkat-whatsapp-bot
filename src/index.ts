@@ -138,15 +138,29 @@ const server = http.createServer((req, res) => {
         req.on('data', chunk => { body += chunk })
         req.on('end', async () => {
             try {
+                console.log('📨 Incoming send request');
                 const { jid, message } = JSON.parse(body)
-                if (!sock || connectionStatus !== 'connected') {
-                    res.statusCode = 503
-                    res.end(JSON.stringify({ error: 'WhatsApp not connected' }))
-                    return
+                console.log(`🎯 Target: ${jid}, Message length: ${message?.length}`);
+                
+                if (!sock) {
+                   console.error('❌ Socket is null');
+                   res.statusCode = 503;
+                   res.end(JSON.stringify({ error: 'WhatsApp socket not initialized' }));
+                   return;
                 }
+                
+                if (connectionStatus !== 'connected') {
+                    console.error('❌ Status not connected:', connectionStatus);
+                    res.statusCode = 503;
+                    res.end(JSON.stringify({ error: `WhatsApp not connected (Status: ${connectionStatus})` }));
+                    return;
+                }
+                
                 await sock.sendMessage(jid, { text: message })
+                console.log('✅ Message sent successfully');
                 res.end(JSON.stringify({ success: true }))
             } catch (e: any) {
+                console.error('❌ Send Error:', e);
                 res.statusCode = 500
                 res.end(JSON.stringify({ error: e.message }))
             }
