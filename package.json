@@ -13,10 +13,14 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.9",
-    "pino": "^9.5.0",
-    "qrcode-terminal": "^0.12.0",
     "@types/node": "^22.10.2",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.1",
+    "p-queue": "^9.1.0",
+    "pino": "^9.5.0",
+    "postgres": "^3.4.8",
+    "qrcode-terminal": "^0.12.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

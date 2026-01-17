@@ -9,17 +9,102 @@ import makeWASocket, {
     DisconnectReason, 
     fetchLatestBaileysVersion, 
     makeCacheableSignalKeyStore,
+    downloadMediaMessage
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import * as http from 'http'
 import * as path from 'path'
+import * as fs from 'fs'
 // @ts-ignore
 import qrTerminal from 'qrcode-terminal'
+import { db } from './db'
+import { users, conversations, messages } from './schema'
+import { eq, and } from 'drizzle-orm'
+import PQueue from 'p-queue'
+
+// Minimal PQueue polyfill if import fails (ESM vs CJS issues often happen in standalone TS)
+// But since we use tsx, it might work. If not, we fall back to simple async.
+
+const msgQueue = new PQueue({ concurrency: 1, interval: 500, intervalCap: 1 });
 
 let sock: any = null
 let qrCode: string | null = null
 let connectionStatus = 'disconnected'
+
+// Helper to sanitize phone
+const sanitizePhone = (id: string) => id.split('@')[0].replace(/\D/g, '')
+
+async function saveIncomingMessage(msg: any) {
+    if (!msg.key.remoteJid || msg.key.fromMe) return;
+
+    const remoteJid = msg.key.remoteJid;
+    const phone = sanitizePhone(remoteJid);
+    const content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '[media]';
+    const msgType = msg.message?.imageMessage ? 'image' : 'text';
+
+    try {
+        // 1. Find or Create User
+        let user = await db.query.users.findFirst({
+            where: eq(users.phone, phone)
+        });
+
+        if (!user) {
+            console.log(`👤 New contact identified: ${phone}`);
+            const [newUser] = await db.insert(users).values({
+                phone: phone,
+                name: msg.pushName || `Customer ${phone}`,
+                role: 'CUSTOMER',
+                isActive: true
+            }).returning();
+            user = newUser;
+        }
+
+        // 2. Find or Create Conversation
+        let conversation = await db.query.conversations.findFirst({
+            where: eq(conversations.userId, user!.id)
+        });
+
+        if (!conversation) {
+            const [newConv] = await db.insert(conversations).values({
+                userId: user!.id,
+                status: 'ai_active',
+                unreadCount: 0
+            }).returning();
+            conversation = newConv;
+        }
+
+        // 3. Handle Media (Optional/Simplified)
+        let mediaUrl = null;
+        if (msgType === 'image') {
+            // Placeholder: In real app, download stream -> upload to R2 -> get URL
+            // const buffer = await downloadMediaMessage(msg, 'buffer', { logger: pino() });
+            mediaUrl = 'https://placehold.co/600x400?text=Image+Received'; 
+        }
+
+        // 4. Save Message
+        await db.insert(messages).values({
+            conversationId: conversation!.id,
+            sender: 'USER',
+            type: msgType,
+            content: content,
+            mediaUrl: mediaUrl,
+        });
+
+        // 5. Update Conversation Metadata
+        await db.update(conversations)
+            .set({ 
+                lastMessageAt: new Date(),
+                unreadCount: (conversation!.unreadCount || 0) + 1 
+            })
+            .where(eq(conversations.id, conversation!.id));
+
+        console.log(`✅ Saved message from ${user!.name} (${phone}): ${content.substring(0, 20)}...`);
+
+    } catch (err) {
+        console.error('❌ Failed to save message:', err);
+    }
+}
 
 async function startWhatsApp() {
     const authPath = path.resolve(__dirname, '../auth_info_baileys')
@@ -37,6 +122,7 @@ async function startWhatsApp() {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }) as any),
         },
         generateHighQualityLinkPreview: true,
+        printQRInTerminal: false, // We handle it manually
         browser: ['Harkat Furniture Bot', 'Chrome', '120.0.0'],
     })
 
@@ -46,9 +132,7 @@ async function startWhatsApp() {
         if (qr) {
             qrCode = qr
             connectionStatus = 'scanning'
-            console.log('🔲 New QR Code generated! Check http://localhost:8001/qr')
-            
-            // Also print QR to terminal using ASCII
+            console.log('🔲 New QR Code generated!')
             qrTerminal.generate(qr, { small: true })
         }
 
@@ -73,111 +157,99 @@ async function startWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds)
     
-    // Listen for incoming messages (optional - for future bot features)
-    sock.ev.on('messages.upsert', async (m: any) => {
-        const msg = m.messages[0]
-        if (!msg.key.fromMe && m.type === 'notify') {
-            console.log(`📨 New message from ${msg.key.remoteJid}:`, msg.message?.conversation || '[media]')
+    // INCOMING MESSAGE HANDLER
+    sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
+        if (type === 'notify') {
+            for (const msg of messages) {
+                if (!msg.key.fromMe) {
+                    await msgQueue.add(() => saveIncomingMessage(msg));
+                }
+            }
         }
     })
 }
 
-// Simple HTTP server to expose status and QR code
+// SHARED INBOX API SERVER
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Access-Control-Allow-Origin', '*')
     
+    // Status Endpoint
     if (req.url === '/status') {
         res.end(JSON.stringify({
             status: connectionStatus,
-            qr: qrCode,
-            user: sock?.user ? { id: sock.user.id, name: sock.user.name } : null
+            qr: qrCode
         }))
-    } else if (req.url === '/qr') {
-        if (qrCode) {
-            res.setHeader('Content-Type', 'text/html')
-            res.end(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>WhatsApp QR Code</title>
-                    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-                    <style>
-                        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
-                        h1 { color: #25D366; }
-                        #qr { padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-                        p { color: #666; }
-                    </style>
-                </head>
-                <body>
-                    <h1>📱 Scan with WhatsApp</h1>
-                    <div id="qr"></div>
-                    <p>Open WhatsApp → Settings → Linked Devices → Link a Device</p>
-                    <script>
-                        QRCode.toCanvas(document.getElementById('qr'), '${qrCode}', { width: 300 });
-                        setTimeout(() => location.reload(), 30000); // Refresh every 30s
-                    </script>
-                </body>
-                </html>
-            `)
-        } else {
-            res.setHeader('Content-Type', 'text/html')
-            res.end(`
-                <!DOCTYPE html>
-                <html>
-                <head><title>WhatsApp Status</title></head>
-                <body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh;">
-                    <h1>${connectionStatus === 'connected' ? '✅ Connected!' : '⏳ Waiting for QR...'}</h1>
-                    <p>Status: ${connectionStatus}</p>
-                    <script>setTimeout(() => location.reload(), 3000);</script>
-                </body>
-                </html>
-            `)
-        }
-    } else if (req.url?.startsWith('/send') && req.method === 'POST') {
+        return;
+    } 
+    
+    // QR Display Endpoint
+    if (req.url === '/qr') {
+        res.setHeader('Content-Type', 'text/html')
+        res.end(qrCode ? 
+            `<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f0f0"><div style="background:white;padding:20px;border-radius:10px;text-align:center"><h2>Scan WhatsApp</h2><div id="qr"></div><script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script><script>QRCode.toCanvas(document.getElementById('qr'), '${qrCode}', {width:300})</script><p>Refreshes every 30s</p><script>setTimeout(()=>location.reload(),30000)</script></div></body></html>` : 
+            `<html><body><h1>${connectionStatus === 'connected' ? '✅ Connected' : '⏳ Initializing...'}</h1><script>setTimeout(()=>location.reload(),2000)</script></body></html>`
+        )
+        return;
+    }
+
+    // SEND MESSAGE (Admin Reply)
+    if (req.url?.startsWith('/send') && req.method === 'POST') {
         let body = ''
         req.on('data', chunk => { body += chunk })
         req.on('end', async () => {
             try {
-                console.log('📨 Incoming send request');
-                const { jid, message } = JSON.parse(body)
-                console.log(`🎯 Target: ${jid}, Message length: ${message?.length}`);
-                
-                if (!sock) {
-                   console.error('❌ Socket is null');
-                   res.statusCode = 503;
-                   res.end(JSON.stringify({ error: 'WhatsApp socket not initialized' }));
-                   return;
-                }
-                
                 if (connectionStatus !== 'connected') {
-                    console.error('❌ Status not connected:', connectionStatus);
-                    res.statusCode = 503;
-                    res.end(JSON.stringify({ error: `WhatsApp not connected (Status: ${connectionStatus})` }));
-                    return;
+                    throw new Error('WhatsApp not connected');
                 }
+
+                const { phone, message } = JSON.parse(body)
+                if (!phone || !message) throw new Error('Existing phone and message required');
+
+                // 1. Send via WhatsApp
+                const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`
+                await msgQueue.add(() => sock.sendMessage(jid, { text: message }));
+
+                // 2. Update DB (Synced with Dashboard)
+                const sanitized = sanitizePhone(phone);
                 
-                await sock.sendMessage(jid, { text: message })
-                console.log('✅ Message sent successfully');
+                // Find User & Conv
+                const user = await db.query.users.findFirst({ where: eq(users.phone, sanitized) });
+                if (user) {
+                    const conv = await db.query.conversations.findFirst({ where: eq(conversations.userId, user.id) });
+                    if (conv) {
+                        // Switch to HUMAN mode
+                        await db.update(conversations)
+                            .set({ status: 'human_manual', lastMessageAt: new Date() })
+                            .where(eq(conversations.id, conv.id));
+
+                        // Insert outgoing message
+                        await db.insert(messages).values({
+                            conversationId: conv.id,
+                            sender: 'ADMIN',
+                            type: 'text',
+                            content: message
+                        });
+                    }
+                }
+
+                console.log(`📤 Reply sent to ${phone}: ${message}`);
                 res.end(JSON.stringify({ success: true }))
+
             } catch (e: any) {
-                console.error('❌ Send Error:', e);
+                console.error('❌ Send Error:', e)
                 res.statusCode = 500
                 res.end(JSON.stringify({ error: e.message }))
             }
         })
-    } else {
-        res.end(JSON.stringify({ 
-            message: 'WhatsApp Bot Service',
-            endpoints: ['/status', '/qr', '/send (POST)']
-        }))
+        return;
     }
+
+    res.end(JSON.stringify({ service: 'Harkat WA Bot', version: '2.0.0' }))
 })
 
 const PORT = process.env.PORT || 8001
 server.listen(PORT, () => {
-    console.log(`🚀 WhatsApp Bot HTTP Server running on port ${PORT}`)
-    console.log(`📊 Status: /status`)
-    console.log(`🔲 QR Code: /qr`)
+    console.log(`🚀 WA Shared Inbox running on port ${PORT}`)
     startWhatsApp()
 })
