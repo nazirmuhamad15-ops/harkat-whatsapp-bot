@@ -52,18 +52,27 @@ let currentUser: { id: string; name: string } | null = null;
 let connectionStatus: 'offline' | 'disconnected' | 'scanning' | 'connected' = 'offline';
 
 // --- CONNECTION EVENTS ---
-wa.on('connection', (status) => {
+// --- CONNECTION EVENTS ---
+wa.on('connection', (ctx) => {
+    const { status, qr } = ctx;
     console.log(`📱 Connection status: ${status}`);
-    connectionStatus = status === 'open' ? 'connected' : status === 'close' ? 'disconnected' : 'offline';
+    
+    // Update Connection Status
     if (status === 'open') {
+        connectionStatus = 'connected';
         currentQR = null;
+    } else if (status === 'close') {
+        connectionStatus = 'disconnected';
+    } else if (status === 'connecting') {
+        connectionStatus = 'offline'; // Attempting to connect
     }
-});
 
-wa.on('qr', (qr) => {
-    console.log('📱 QR Code received');
-    currentQR = qr;
-    connectionStatus = 'scanning';
+    // Handle QR Code
+    if (qr) {
+        console.log('📱 QR Code received');
+        currentQR = qr;
+        connectionStatus = 'scanning';
+    }
 });
 
 // --- MESSAGES EVENT ---
@@ -271,9 +280,8 @@ app.post('/logout', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 HTTP Server running on port ${PORT}`);
     console.log(`📱 WhatsApp Bot starting...`);
-    wa.initialize()
-        .then(() => console.log('✅ Client initialized - Waiting for QR/Connection'))
-        .catch(err => console.error('❌ Failed to initialize client:', err));
+    // wa.initialize() is handled automatically by new Client()
+    // Just waiting for events now
 });
 
 // Export for use
