@@ -13,9 +13,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
       
-      # Attempt to create the app if it doesn't exist
-      # Using 'personal' org simple default, ignoring error if app exists
-      - run: flyctl apps create harkat-furniture-bot-v2 --org personal || echo "App might already exist, continuing..."
+      # Debug: Check who am I and list orgs
+      - run: |
+          echo "Checking Auth..."
+          flyctl auth whoami
+          echo "Listing Orgs..."
+          flyctl orgs list
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      
+      # Attempt creation (without forcing org, let it use default/personal)
+      # We allow failure here in case app exists, but we want to see the output
+      - run: flyctl apps create harkat-furniture-bot-v2 || echo "Creation failed or app exists, continuing to deploy..."
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           
