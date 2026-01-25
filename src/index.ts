@@ -200,8 +200,38 @@ app.get('/', (req, res) => {
         status: 'ok', 
         service: 'Harkat WhatsApp Bot',
         version: '2.0.0',
-        connection: connectionStatus
+        connection: connectionStatus,
+        hint: connectionStatus === 'connected' ? 'All good!' : 'Go to /qr to scan QR Code'
     });
+});
+
+// GET /qr - Render QR Code
+app.get('/qr', async (req, res) => {
+    if (connectionStatus === 'connected') {
+        return res.send('<html><body><h1>✅ Bot is already connected!</h1></body></html>');
+    }
+    if (!currentQR) {
+        return res.send('<html><body><h1>⏳ QR Code not ready yet. Please Wait/Refresh...</h1></body></html>');
+    }
+    
+    try {
+        const QRCode = require('qrcode');
+        const url = await QRCode.toDataURL(currentQR);
+        res.send(`
+            <html>
+                <body style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
+                    <div style="text-align:center;">
+                        <h1>Scan QR Code</h1>
+                        <img src="${url}" alt="QR Code" style="width:300px; height:300px; border:1px solid #ddd;"/>
+                        <p>Status: ${connectionStatus}</p>
+                        <p>Refresh if expired</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    } catch (err) {
+        res.status(500).send('Error generating QR image');
+    }
 });
 
 // POST /send - Send message
