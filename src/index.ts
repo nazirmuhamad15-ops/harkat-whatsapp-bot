@@ -85,8 +85,34 @@ wa.on('messages', async (ctx) => {
         const content = ctx.text || '';
         const msgType = ctx.chatType || 'text';
 
-        // Skip if prefix command
-        if (ctx.isPrefix) return;
+        // Check for Commands (Prefix: !)
+        if (ctx.command) {
+            const cmd = ctx.command.toLowerCase();
+            
+            if (cmd === 'menu' || cmd === 'help') {
+                await wa.send(ctx.roomId, `
+🤖 *Harkat Furniture Bot* 🤖
+
+Halo kak! Ada yang bisa dibantu?
+Ketik pesan langsung untuk ngobrol dengan AI kami.
+
+Atau gunakan perintah:
+✅ *!menu* - Tampilkan pesan ini
+✅ *!status* - Cek status order (WIP)
+✅ *!admin* - Panggil admin (WIP)
+✅ *!ping* - Cek bot aktif
+
+_Bot powered by Gemini AI_
+                `.trim());
+                return;
+            }
+
+            if (cmd === 'ping') {
+                await wa.send(ctx.roomId, 'Pong! 🏓 Bot is active.');
+                return;
+            }
+            // Add more commands here
+        }
 
         console.log(`📩 Received from ${phone}: ${content.slice(0, 50)}...`);
 
