@@ -22,9 +22,14 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       
-      # Attempt creation (without forcing org, let it use default/personal)
-      # We allow failure here in case app exists, but we want to see the output
-      - run: flyctl apps create harkat-furniture-bot-v2 || echo "Creation failed or app exists, continuing to deploy..."
+      # Attempt to create the app if it doesn't exist
+      # Using 'personal' org simple default, ignoring error if app exists
+      - run: flyctl apps create harkat-furniture-bot-v2 --org personal || echo "App might already exist, continuing..."
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # Set Secrets (Env Vars)
+      - run: flyctl secrets set DATABASE_URL="${{ secrets.DATABASE_URL }}" GOOGLE_GENERATIVE_AI_API_KEY="${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           
