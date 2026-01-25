@@ -271,6 +271,9 @@ app.post('/logout', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 HTTP Server running on port ${PORT}`);
     console.log(`📱 WhatsApp Bot starting...`);
+    wa.connect()
+        .then(() => console.log('✅ Client connection initiated'))
+        .catch(err => console.error('❌ Failed to connect client:', err));
 });
 
 // Export for use
