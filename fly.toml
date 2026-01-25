@@ -1,4 +1,4 @@
-app = "harkat-whatsapp-bot"
+app = "harkat-furniture-bot-v2"
 primary_region = "sin"
 
 [build]
