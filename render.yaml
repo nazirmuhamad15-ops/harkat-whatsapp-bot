@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: harkat-whatsapp-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_GENERATIVE_AI_API_KEY
+        sync: false
+      - key: PORT
+        value: 10000
+    autoDeploy: true
