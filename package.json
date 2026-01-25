@@ -4,7 +4,7 @@
   "description": "Harkat Furniture WhatsApp Bot using Zaileys",
   "main": "src/index.ts",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "npx tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
