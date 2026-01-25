@@ -12,6 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      
+      # Attempt to create the app if it doesn't exist
+      # Using 'personal' org simple default, ignoring error if app exists
+      - run: flyctl apps create harkat-whatsapp-bot --org personal || echo "App might already exist, continuing..."
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
