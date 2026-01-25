@@ -1,255 +1,247 @@
-// Standalone WhatsApp Bot Service
-// Run this separately with: npx tsx scripts/whatsapp-bot.ts
+import 'dotenv/config';
+import express from 'express';
+import { Client } from 'zaileys';
+import { db } from './db';
+import { users, conversations, messages } from './schema';
+import { eq, desc } from 'drizzle-orm';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-/* eslint-disable react-hooks/rules-of-hooks */
-/* eslint-disable @typescript-eslint/no-require-imports */
+// --- CONFIGURATION ---
+const PORT = process.env.PORT || 3001;
+const USE_AI = true;
 
-import makeWASocket, { 
-    useMultiFileAuthState, 
-    DisconnectReason, 
-    fetchLatestBaileysVersion, 
-    makeCacheableSignalKeyStore,
-    downloadMediaMessage
-} from '@whiskeysockets/baileys'
-import { Boom } from '@hapi/boom'
-import pino from 'pino'
-import * as http from 'http'
-import * as path from 'path'
-import * as fs from 'fs'
-// @ts-ignore
-import qrTerminal from 'qrcode-terminal'
-import { db } from './db'
-import { users, conversations, messages } from './schema'
-import { eq, and } from 'drizzle-orm'
-import PQueue from 'p-queue'
+// --- EXPRESS SERVER for API endpoints ---
+const app = express();
+app.use(express.json());
 
-// Minimal PQueue polyfill if import fails (ESM vs CJS issues often happen in standalone TS)
-// But since we use tsx, it might work. If not, we fall back to simple async.
+// --- AI SETUP ---
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || '');
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-const msgQueue = new PQueue({ concurrency: 1, interval: 500, intervalCap: 1 });
+// --- ZAILEYS CLIENT ---
+const wa = new Client({
+    session: 'harkat-bot',
+    authType: 'qr',
+    prefix: '!',
+    showLogs: true,
+    fancyLogs: true,
+    autoRead: true,
+    autoOnline: true,
+    autoPresence: true,
+    autoRejectCall: true,
+    ignoreMe: true,
+    limiter: { maxMessages: 20, durationMs: 10_000 },
+    sticker: {
+        authorName: 'Harkat Furniture',
+        packageName: 'HarkatBot',
+        quality: 80,
+    },
+});
 
-let sock: any = null
-let qrCode: string | null = null
-let connectionStatus = 'disconnected'
+// --- HELPER: FORMAT PHONE ---
+function formatPhone(phone: string): string {
+    let p = phone.replace(/\D/g, '');
+    if (p.startsWith('0')) p = '62' + p.slice(1);
+    if (!p.startsWith('62')) p = '62' + p;
+    return p;
+}
 
-// Helper to sanitize phone
-const sanitizePhone = (id: string) => id.split('@')[0].replace(/\D/g, '')
+// --- STATE ---
+let currentQR: string | null = null;
+let currentUser: { id: string; name: string } | null = null;
+let connectionStatus: 'offline' | 'disconnected' | 'scanning' | 'connected' = 'offline';
 
-async function saveIncomingMessage(msg: any) {
-    if (!msg.key.remoteJid || msg.key.fromMe) return;
+// --- CONNECTION EVENTS ---
+wa.on('connection', (status) => {
+    console.log(`📱 Connection status: ${status}`);
+    connectionStatus = status === 'open' ? 'connected' : status === 'close' ? 'disconnected' : 'offline';
+    if (status === 'open') {
+        currentQR = null;
+    }
+});
 
-    const remoteJid = msg.key.remoteJid;
-    const phone = sanitizePhone(remoteJid);
-    const content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '[media]';
-    const msgType = msg.message?.imageMessage ? 'image' : 'text';
+wa.on('qr', (qr) => {
+    console.log('📱 QR Code received');
+    currentQR = qr;
+    connectionStatus = 'scanning';
+});
 
+// --- MESSAGES EVENT ---
+wa.on('messages', async (ctx) => {
     try {
+        // Skip bot messages and status broadcasts
+        if (ctx.isBot || ctx.isStory) return;
+
+        const phone = ctx.senderId.split('@')[0];
+        const content = ctx.text || '';
+        const msgType = ctx.chatType || 'text';
+
+        // Skip if prefix command
+        if (ctx.isPrefix) return;
+
+        console.log(`📩 Received from ${phone}: ${content.slice(0, 50)}...`);
+
         // 1. Find or Create User
         let user = await db.query.users.findFirst({
-            where: eq(users.phone, phone)
+            where: (u, { eq }) => eq(u.phone, phone)
         });
 
         if (!user) {
-            console.log(`👤 New contact identified: ${phone}`);
+            console.log('Creating new user/contact...');
             const [newUser] = await db.insert(users).values({
+                name: ctx.senderName || 'WhatsApp User',
                 phone: phone,
-                name: msg.pushName || `Customer ${phone}`,
+                email: `${phone}@whatsapp.user`,
+                password: 'hashed_placeholder',
                 role: 'CUSTOMER',
-                isActive: true
+                isActive: true,
+                emailVerified: true
             }).returning();
             user = newUser;
         }
 
         // 2. Find or Create Conversation
         let conversation = await db.query.conversations.findFirst({
-            where: eq(conversations.userId, user!.id)
+            where: eq(conversations.userId, user.id)
         });
 
         if (!conversation) {
             const [newConv] = await db.insert(conversations).values({
-                userId: user!.id,
+                userId: user.id,
                 status: 'ai_active',
-                unreadCount: 0
+                unreadCount: 0,
             }).returning();
             conversation = newConv;
         }
 
-        // 3. Handle Media (Optional/Simplified)
-        let mediaUrl = null;
-        if (msgType === 'image') {
-            // Placeholder: In real app, download stream -> upload to R2 -> get URL
-            // const buffer = await downloadMediaMessage(msg, 'buffer', { logger: pino() });
-            mediaUrl = 'https://placehold.co/600x400?text=Image+Received'; 
-        }
-
-        // 4. Save Message
+        // 3. Save Message to DB
         await db.insert(messages).values({
-            conversationId: conversation!.id,
+            conversationId: conversation.id,
             sender: 'USER',
             type: msgType,
             content: content,
-            mediaUrl: mediaUrl,
+            mediaUrl: null,
         });
 
-        // 5. Update Conversation Metadata
+        // 4. Update Conversation Stats
         await db.update(conversations)
-            .set({ 
+            .set({
                 lastMessageAt: new Date(),
-                unreadCount: (conversation!.unreadCount || 0) + 1 
+                unreadCount: (conversation.unreadCount || 0) + 1
             })
-            .where(eq(conversations.id, conversation!.id));
+            .where(eq(conversations.id, conversation.id));
 
-        console.log(`✅ Saved message from ${user!.name} (${phone}): ${content.substring(0, 20)}...`);
+        // 5. AI AUTO-REPLY (if status is 'ai_active')
+        if (conversation.status === 'ai_active' && USE_AI && content) {
+            await processAIResponse(ctx.roomId, conversation.id, content);
+        }
 
     } catch (err) {
-        console.error('❌ Failed to save message:', err);
+        console.error('Error processing incoming message:', err);
+    }
+});
+
+// --- AI LOGIC ---
+async function processAIResponse(roomId: string, conversationId: string, userMessage: string) {
+    try {
+        // Fetch Context (Last 5 messages)
+        const history = await db.query.messages.findMany({
+            where: eq(messages.conversationId, conversationId),
+            orderBy: desc(messages.createdAt),
+            limit: 5
+        });
+
+        // Construct Prompt
+        const contextStr = history.reverse().map(m => `${m.sender}: ${m.content}`).join('\n');
+
+        const systemPrompt = `
+You are Harkat Furniture's AI Assistant. 
+You are helpful, polite, and professional.
+Answer briefly. If you don't know, ask the user to wait for a human agent.
+Context:
+${contextStr}
+        `;
+
+        const result = await model.generateContent(systemPrompt);
+        const aiResponse = result.response.text();
+
+        console.log(`🤖 AI Reply: ${aiResponse}`);
+
+        // Send to WhatsApp using zaileys
+        await wa.send(roomId, aiResponse);
+
+        // Save AI Reply to DB
+        await db.insert(messages).values({
+            conversationId: conversationId,
+            sender: 'SYSTEM',
+            content: aiResponse,
+            type: 'text'
+        });
+
+    } catch (err) {
+        console.error('AI Processing Error:', err);
     }
 }
 
-async function startWhatsApp() {
-    const authPath = path.resolve(__dirname, '../auth_info_baileys')
-    const { state, saveCreds } = await useMultiFileAuthState(authPath)
-    const { version, isLatest } = await fetchLatestBaileysVersion()
-    
-    console.log(`📱 Starting WhatsApp Bot...`)
-    console.log(`📦 Using WA v${version.join('.')}, isLatest: ${isLatest}`)
+// --- HTTP API ENDPOINTS ---
 
-    sock = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }) as any,
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }) as any),
-        },
-        generateHighQualityLinkPreview: true,
-        printQRInTerminal: false, // We handle it manually
-        browser: ['Harkat Furniture Bot', 'Chrome', '120.0.0'],
-    })
+// GET /status - For admin panel
+app.get('/status', (req, res) => {
+    res.json({
+        status: connectionStatus,
+        qr: currentQR,
+        user: currentUser
+    });
+});
 
-    sock.ev.on('connection.update', (update: any) => {
-        const { connection, lastDisconnect, qr } = update
+// GET / - Health check
+app.get('/', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        service: 'Harkat WhatsApp Bot',
+        version: '2.0.0',
+        connection: connectionStatus
+    });
+});
+
+// POST /send - Send message
+app.post('/send', async (req, res) => {
+    try {
+        const { jid, message, phone } = req.body;
+        const recipient = jid || (phone ? `${formatPhone(phone)}@s.whatsapp.net` : null);
         
-        if (qr) {
-            qrCode = qr
-            connectionStatus = 'scanning'
-            console.log('🔲 New QR Code generated!')
-            qrTerminal.generate(qr, { small: true })
+        if (!recipient || !message) {
+            return res.status(400).json({ error: 'Missing jid/phone or message' });
         }
 
-        if (connection === 'close') {
-            const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-            console.log('❌ Connection closed, status:', statusCode)
-            connectionStatus = 'disconnected'
-            qrCode = null
-            
-            if (shouldReconnect) {
-                console.log('🔄 Reconnecting in 5 seconds...')
-                setTimeout(startWhatsApp, 5000)
-            }
-        } else if (connection === 'open') {
-            console.log('✅ WhatsApp Connected!')
-            console.log(`👤 Logged in as: ${sock.user?.name || sock.user?.id}`)
-            connectionStatus = 'connected'
-            qrCode = null
-        }
-    })
-
-    sock.ev.on('creds.update', saveCreds)
-    
-    // INCOMING MESSAGE HANDLER
-    sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
-        if (type === 'notify') {
-            for (const msg of messages) {
-                if (!msg.key.fromMe) {
-                    await msgQueue.add(() => saveIncomingMessage(msg));
-                }
-            }
-        }
-    })
-}
-
-// SHARED INBOX API SERVER
-const server = http.createServer((req, res) => {
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    
-    // Status Endpoint
-    if (req.url === '/status') {
-        res.end(JSON.stringify({
-            status: connectionStatus,
-            qr: qrCode
-        }))
-        return;
-    } 
-    
-    // QR Display Endpoint
-    if (req.url === '/qr') {
-        res.setHeader('Content-Type', 'text/html')
-        res.end(qrCode ? 
-            `<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f0f0"><div style="background:white;padding:20px;border-radius:10px;text-align:center"><h2>Scan WhatsApp</h2><div id="qr"></div><script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script><script>QRCode.toCanvas(document.getElementById('qr'), '${qrCode}', {width:300})</script><p>Refreshes every 30s</p><script>setTimeout(()=>location.reload(),30000)</script></div></body></html>` : 
-            `<html><body><h1>${connectionStatus === 'connected' ? '✅ Connected' : '⏳ Initializing...'}</h1><script>setTimeout(()=>location.reload(),2000)</script></body></html>`
-        )
-        return;
+        await wa.send(recipient, message);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Send error:', err);
+        res.status(500).json({ error: 'Failed to send message' });
     }
+});
 
-    // SEND MESSAGE (Admin Reply)
-    if (req.url?.startsWith('/send') && req.method === 'POST') {
-        let body = ''
-        req.on('data', chunk => { body += chunk })
-        req.on('end', async () => {
-            try {
-                if (connectionStatus !== 'connected') {
-                    throw new Error('WhatsApp not connected');
-                }
+// POST /connect - Reconnect
+app.post('/connect', (req, res) => {
+    res.json({ success: true, message: 'Bot is running, scan QR if needed' });
+});
 
-                const { phone, message } = JSON.parse(body)
-                if (!phone || !message) throw new Error('Existing phone and message required');
-
-                // 1. Send via WhatsApp
-                const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`
-                await msgQueue.add(() => sock.sendMessage(jid, { text: message }));
-
-                // 2. Update DB (Synced with Dashboard)
-                const sanitized = sanitizePhone(phone);
-                
-                // Find User & Conv
-                const user = await db.query.users.findFirst({ where: eq(users.phone, sanitized) });
-                if (user) {
-                    const conv = await db.query.conversations.findFirst({ where: eq(conversations.userId, user.id) });
-                    if (conv) {
-                        // Switch to HUMAN mode
-                        await db.update(conversations)
-                            .set({ status: 'human_manual', lastMessageAt: new Date() })
-                            .where(eq(conversations.id, conv.id));
-
-                        // Insert outgoing message
-                        await db.insert(messages).values({
-                            conversationId: conv.id,
-                            sender: 'ADMIN',
-                            type: 'text',
-                            content: message
-                        });
-                    }
-                }
-
-                console.log(`📤 Reply sent to ${phone}: ${message}`);
-                res.end(JSON.stringify({ success: true }))
-
-            } catch (e: any) {
-                console.error('❌ Send Error:', e)
-                res.statusCode = 500
-                res.end(JSON.stringify({ error: e.message }))
-            }
-        })
-        return;
+// POST /logout - Disconnect
+app.post('/logout', async (req, res) => {
+    try {
+        // Zaileys doesn't have direct logout, but we can handle it
+        res.json({ success: true, message: 'Logout request received' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to logout' });
     }
+});
 
-    res.end(JSON.stringify({ service: 'Harkat WA Bot', version: '2.0.0' }))
-})
+// --- START SERVER ---
+app.listen(PORT, () => {
+    console.log(`🚀 HTTP Server running on port ${PORT}`);
+    console.log(`📱 WhatsApp Bot starting...`);
+});
 
-const PORT = process.env.PORT || 8001
-server.listen(PORT, () => {
-    console.log(`🚀 WA Shared Inbox running on port ${PORT}`)
-    startWhatsApp()
-})
+// Export for use
+export { wa };

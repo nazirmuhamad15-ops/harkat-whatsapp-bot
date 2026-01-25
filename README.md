@@ -1,63 +1,49 @@
-# Harkat Furniture WhatsApp Bot
+# Harkat WhatsApp Bot v2.0
 
-WhatsApp Bot untuk Harkat Furniture menggunakan Baileys.
+WhatsApp Bot untuk Harkat Furniture menggunakan **Zaileys** - simplified WhatsApp API.
 
-## Deploy ke Railway
+## Features
 
-### 1. Buat akun Railway
-- Kunjungi [railway.app](https://railway.app)
-- Login dengan GitHub
+- 🤖 AI Auto-Reply dengan Google Gemini
+- 💬 Rate limiting built-in (20 msg/10 detik)
+- 📱 Auto-read, auto-online, auto-reject calls
+- 🔌 HTTP API untuk integrasi admin panel
 
-### 2. Push folder ini ke GitHub
+## Quick Start
+
 ```bash
-cd whatsapp-bot
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/harkat-whatsapp-bot.git
-git push -u origin main
+# Install dependencies
+npm install
+
+# Setup environment
+cp .env.example .env
+# Edit .env dengan DATABASE_URL dan GOOGLE_GENERATIVE_AI_API_KEY
+
+# Run
+npm start
 ```
 
-### 3. Deploy di Railway
-1. Klik **"New Project"**
-2. Pilih **"Deploy from GitHub repo"**
-3. Pilih repository `harkat-whatsapp-bot`
-4. Railway akan otomatis detect Node.js dan deploy
-
-### 4. Konfigurasi
-- Railway akan memberikan URL seperti: `https://harkat-whatsapp-bot.up.railway.app`
-- Buka `/qr` untuk scan QR code
-- Update `WHATSAPP_BOT_URL` di project utama
-
-## Endpoints
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Info |
-| `/status` | GET | Status koneksi & QR code |
-| `/qr` | GET | Halaman QR code |
-| `/send` | POST | Kirim pesan |
-| `/health` | GET | Health check |
+| `/` | GET | Health check |
+| `/status` | GET | Connection status & QR |
+| `/send` | POST | Send message |
+| `/connect` | POST | Reconnect bot |
+| `/logout` | POST | Disconnect |
 
-## Mengirim Pesan
+## Environment Variables
 
-```bash
-curl -X POST https://YOUR_URL/send \
-  -H "Content-Type: application/json" \
-  -d '{"jid": "628123456789@s.whatsapp.net", "message": "Hello!"}'
+```env
+DATABASE_URL=postgresql://...
+GOOGLE_GENERATIVE_AI_API_KEY=...
+PORT=3001
 ```
 
-## Environment Variables (Opsional)
+## Deploy to Render
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 8001 | Port server |
-
-## Session Persistence
-
-Session WhatsApp disimpan di folder `auth_info/`. Di Railway, session akan persist selama tidak di-redeploy.
-
-Untuk backup session:
-1. Download folder `auth_info/` dari Railway
-2. Simpan di tempat aman
-3. Upload kembali jika perlu restore
+1. Connect GitHub repo
+2. Set environment variables
+3. Build command: `npm install`
+4. Start command: `npm start`

@@ -1,27 +1,32 @@
 {
   "name": "harkat-whatsapp-bot",
-  "version": "1.0.0",
-  "description": "Standalone WhatsApp Bot for Harkat Furniture",
+  "version": "2.0.0",
+  "description": "Harkat Furniture WhatsApp Bot using Zaileys",
   "main": "src/index.ts",
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
   },
+  "keywords": ["whatsapp", "bot", "zaileys", "harkat"],
+  "author": "Harkat Furniture",
+  "license": "MIT",
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
-    "@types/node": "^22.10.2",
-    "@whiskeysockets/baileys": "^6.7.9",
-    "dotenv": "^17.2.3",
-    "drizzle-orm": "^0.45.1",
-    "p-queue": "^9.1.0",
-    "pino": "^9.5.0",
-    "postgres": "^3.4.8",
-    "qrcode-terminal": "^0.12.0",
+    "@google/generative-ai": "^0.21.0",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.38.3",
+    "express": "^4.21.2",
+    "postgres": "^3.4.5",
+    "zaileys": "^2.2.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
